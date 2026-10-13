@@ -32,6 +32,9 @@ async def async_setup_entry(
 ) -> None:
     """Set up climate platform."""
     coordinator = hass.data[DOMAIN][config_entry.unique_id]
+    if not coordinator.supports_remote_commands:
+        async_add_entities([])
+        return
     entities = []
     for vehicle in coordinator.vehicle_manager.vehicles.values():
         if vehicle.air_control_is_on is not None:

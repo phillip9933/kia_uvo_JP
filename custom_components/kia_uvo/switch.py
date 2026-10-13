@@ -196,6 +196,8 @@ async def async_setup_entry(
     for vehicle_id in coordinator.vehicle_manager.vehicles:
         vehicle: Vehicle = coordinator.vehicle_manager.vehicles[vehicle_id]
         for description in SWITCH_DESCRIPTIONS:
+            if not coordinator.supports_remote_commands:
+                continue
             if description.exists_fn(vehicle):
                 entities.append(
                     HyundaiKiaConnectSwitch(coordinator, description, vehicle)

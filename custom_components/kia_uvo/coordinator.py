@@ -142,6 +142,24 @@ class HyundaiKiaConnectDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any
             self.no_force_refresh_hour_finish,
         )
 
+    @property
+    def supports_remote_commands(self) -> bool:
+        """Whether this API implements vehicle commands."""
+        return bool(getattr(self.vehicle_manager.api, "supports_remote_commands", True))
+
+    @property
+    def supports_force_refresh(self) -> bool:
+        """Whether this API implements requests for fresh vehicle status."""
+        return bool(getattr(self.vehicle_manager.api, "supports_force_refresh", True))
+
+    def _require_remote_commands(self) -> None:
+        if not self.supports_remote_commands:
+            raise HomeAssistantError("This region does not support vehicle commands")
+
+    def _require_force_refresh(self) -> None:
+        if not self.supports_force_refresh:
+            raise HomeAssistantError("This region supports cached vehicle status only")
+
     async def _async_update_data(self) -> dict[str, Any]:
         """Update data via library. Called by update_coordinator periodically.
 
@@ -173,6 +191,18 @@ class HyundaiKiaConnectDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any
                 f"Token refresh failed, will retry in 60s: {err}",
                 retry_after=60,
             ) from err
+        if not self.supports_force_refresh:
+            try:
+                await self.hass.async_add_executor_job(
+                    self.vehicle_manager.update_all_vehicles_with_cached_state
+                )
+            except AuthenticationError as err:
+                raise ConfigEntryAuthFailed(
+                    "Cached status authentication failed"
+                ) from err
+            except Exception as err:
+                raise UpdateFailed("Unable to retrieve cached vehicle status") from err
+            return self.data
         current_hour = dt_util.now().hour
 
         if (
@@ -224,6 +254,7 @@ class HyundaiKiaConnectDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any
 
     async def async_force_update_all(self) -> None:
         """Force refresh vehicle data and update it."""
+        self._require_force_refresh()
         await self.async_check_and_refresh_token()
         await self.hass.async_add_executor_job(
             self.vehicle_manager.force_refresh_all_vehicles_states
@@ -232,6 +263,7 @@ class HyundaiKiaConnectDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any
 
     async def async_force_refresh_vehicle(self, vehicle_id: str) -> None:
         """Force refresh a single vehicle's state."""
+        self._require_force_refresh()
         await self.async_check_and_refresh_token()
         await self.hass.async_add_executor_job(
             self.vehicle_manager.force_refresh_vehicle_state, vehicle_id
@@ -276,6 +308,7 @@ class HyundaiKiaConnectDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any
 
     async def async_request_svm_capture(self, vehicle_id: str) -> SVMDetails:
         """Trigger a fresh SVM capture and update the cached details."""
+        self._require_remote_commands()
         details = await self.hass.async_add_executor_job(
             self.vehicle_manager.request_svm_capture,
             vehicle_id,
@@ -376,6 +409,9 @@ class HyundaiKiaConnectDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any
         already in progress, raises HomeAssistantError immediately so
         the user gets a clear message instead of a mysterious long wait.
         """
+        self._require_remote_commands()
+        if force_refresh:
+            self._require_force_refresh()
         if self._action_lock.locked():
             _LOGGER.warning(
                 "Vehicle action '%s' rejected: another action is already in progress",

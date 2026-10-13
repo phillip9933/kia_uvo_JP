@@ -112,6 +112,11 @@ async def async_setup_entry(
     for vehicle_id in coordinator.vehicle_manager.vehicles:
         vehicle: Vehicle = coordinator.vehicle_manager.vehicles[vehicle_id]
         for description in BUTTON_DESCRIPTIONS:
+            if description.key == "force_refresh":
+                if not coordinator.supports_force_refresh:
+                    continue
+            elif not coordinator.supports_remote_commands:
+                continue
             if not description.exists_fn(vehicle):
                 continue
             entities.append(HyundaiKiaConnectButton(coordinator, description, vehicle))
