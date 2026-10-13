@@ -25,6 +25,7 @@ from hyundai_kia_connect_api.const import OTP_NOTIFY_TYPE
 from hyundai_kia_connect_api.exceptions import AuthenticationError
 
 from .const import (
+    BRAND_HYUNDAI,
     BRANDS,
     CONF_BRAND,
     CONF_ENABLE_GEOLOCATION_ENTITY,
@@ -41,6 +42,7 @@ from .const import (
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_USE_EMAIL_WITH_GEOCODE_API,
     DOMAIN,
+    REGION_JAPAN,
     REGIONS,
 )
 
@@ -202,6 +204,15 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._region_data = user_input
         self._region_data[CONF_REGION] = int(self._region_data[CONF_REGION])
         self._region_data[CONF_BRAND] = int(self._region_data[CONF_BRAND])
+        if (
+            REGIONS[self._region_data[CONF_REGION]] == REGION_JAPAN
+            and BRANDS[self._region_data[CONF_BRAND]] != BRAND_HYUNDAI
+        ):
+            return self.async_show_form(
+                step_id="user",
+                data_schema=STEP_REGION_DATA_SCHEMA,
+                errors={CONF_BRAND: "unsupported_japan_brand"},
+            )
         # Unused but keeping the code since I suspect token based will be back!
         # if REGIONS[self._region_data[CONF_REGION]] == REGION_EUROPE and (
         #    BRANDS[self._region_data[CONF_BRAND]] == BRAND_KIA
@@ -220,15 +231,15 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             assert self._region_data is not None
             # Combine region data with credentials
             full_config = {**self._region_data, **user_input}
-            self._vehicle_manager = VehicleManager(
-                region=full_config[CONF_REGION],
-                brand=full_config[CONF_BRAND],
-                language=self.hass.config.language,
-                username=full_config[CONF_USERNAME],
-                password=full_config[CONF_PASSWORD],
-                pin=full_config[CONF_PIN],
-            )
             try:
+                self._vehicle_manager = VehicleManager(
+                    region=full_config[CONF_REGION],
+                    brand=full_config[CONF_BRAND],
+                    language=self.hass.config.language,
+                    username=full_config[CONF_USERNAME],
+                    password=full_config[CONF_PASSWORD],
+                    pin=full_config[CONF_PIN],
+                )
                 result = await validate_input(
                     self.hass, full_config, self._vehicle_manager
                 )
@@ -358,15 +369,15 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             assert self._region_data is not None
             # Combine region data with credentials
             full_config = {**self._region_data, **user_input}
-            self._vehicle_manager = VehicleManager(
-                region=full_config[CONF_REGION],
-                brand=full_config[CONF_BRAND],
-                language=self.hass.config.language,
-                username=full_config[CONF_USERNAME],
-                password=full_config[CONF_PASSWORD],
-                pin=full_config[CONF_PIN],
-            )
             try:
+                self._vehicle_manager = VehicleManager(
+                    region=full_config[CONF_REGION],
+                    brand=full_config[CONF_BRAND],
+                    language=self.hass.config.language,
+                    username=full_config[CONF_USERNAME],
+                    password=full_config[CONF_PASSWORD],
+                    pin=full_config[CONF_PIN],
+                )
                 await validate_input(self.hass, full_config, self._vehicle_manager)
             except InvalidAuth:
                 errors["base"] = "invalid_auth"
