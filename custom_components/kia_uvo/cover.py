@@ -65,7 +65,7 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator = hass.data[DOMAIN][config_entry.unique_id]
-    if not coordinator.supports_remote_commands:
+    if not (coordinator.supports_command("set_windows_state")):
         async_add_entities([])
         return
     entities = []
@@ -73,7 +73,10 @@ async def async_setup_entry(
         vehicle: Vehicle = coordinator.vehicle_manager.vehicles[vehicle_id]
         if not vehicle.supports_window_control:
             continue
+        positions = getattr(vehicle, "supported_window_positions", None)
         for description in COVER_DESCRIPTIONS:
+            if positions is not None and description.window_position not in positions:
+                continue
             if getattr(vehicle, description.key, None) is not None:
                 entities.append(
                     HyundaiKiaConnectCover(coordinator, description, vehicle)

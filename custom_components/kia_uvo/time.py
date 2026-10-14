@@ -60,7 +60,7 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator = hass.data[DOMAIN][config_entry.unique_id]
-    if not coordinator.supports_remote_commands:
+    if not (coordinator.supports_command("schedule_charging_and_climate")):
         async_add_entities([])
         return
     entities = []

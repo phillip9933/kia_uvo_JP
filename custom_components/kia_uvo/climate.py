@@ -32,7 +32,10 @@ async def async_setup_entry(
 ) -> None:
     """Set up climate platform."""
     coordinator = hass.data[DOMAIN][config_entry.unique_id]
-    if not coordinator.supports_remote_commands:
+    if not (
+        coordinator.supports_command("start_climate")
+        and coordinator.supports_command("stop_climate")
+    ):
         async_add_entities([])
         return
     entities = []
@@ -141,7 +144,12 @@ class HyundaiKiaCarClimateControlSwitch(HyundaiKiaConnectEntity, ClimateEntity):
     @property
     def min_temp(self) -> float:
         """Get the minimum settable temperature."""
-        # TODO: get the exact per-region range from the lib
+        bounds = cast(
+            tuple[float, float] | None,
+            getattr(self.vehicle, "climate_temperature_range", None),
+        )
+        if bounds is not None:
+            return bounds[0]
         # USA/CA report Fahrenheit; the hardcoded 14-30 °C bounds made the
         # climate slider unusable (14-30 °F) for those vehicles.
         if self.temperature_unit == UnitOfTemperature.FAHRENHEIT:
@@ -151,7 +159,12 @@ class HyundaiKiaCarClimateControlSwitch(HyundaiKiaConnectEntity, ClimateEntity):
     @property
     def max_temp(self) -> float:
         """Get the maximum settable temperature."""
-        # TODO: get the exact per-region range from the lib
+        bounds = cast(
+            tuple[float, float] | None,
+            getattr(self.vehicle, "climate_temperature_range", None),
+        )
+        if bounds is not None:
+            return bounds[1]
         if self.temperature_unit == UnitOfTemperature.FAHRENHEIT:
             return 82
         return 30

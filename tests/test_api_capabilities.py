@@ -85,6 +85,7 @@ async def test_cached_only_region_has_no_remote_entities(platform) -> None:
     vehicle.air_control_is_on = False
     coordinator = make_coordinator(vehicle)
     coordinator.supports_remote_commands = False
+    coordinator.supports_command = lambda _: False
     coordinator.supports_force_refresh = False
     hass, entry = make_hass(coordinator)
     created = []
@@ -122,6 +123,7 @@ async def test_refresh_button_capability_is_independent(remote, force):
     vehicle = Vehicle(id="v1", name="test", model="test")
     coordinator = make_coordinator(vehicle)
     coordinator.supports_remote_commands = remote
+    coordinator.supports_command = lambda _: remote
     coordinator.supports_force_refresh = force
     hass, entry = make_hass(coordinator)
     created = []
@@ -137,8 +139,69 @@ async def test_cached_only_switches_keep_local_svm_setting():
     vehicle.air_control_is_on = False
     coordinator = make_coordinator(vehicle)
     coordinator.supports_remote_commands = False
+    coordinator.supports_command = lambda _: False
     hass, entry = make_hass(coordinator)
     created = []
     await switch.async_setup_entry(hass, entry, created.extend)
     assert len(created) == 1
     assert isinstance(created[0], switch.SVMDewarpSwitch)
+
+
+def test_command_allowlist_and_legacy_fallback():
+    coordinator = _coordinator(remote=True)
+    coordinator.vehicle_manager.api.supported_commands = frozenset({"lock_action"})
+    assert coordinator.supports_command("lock_action")
+    assert not coordinator.supports_command("start_climate")
+    coordinator.vehicle_manager.api.supported_commands = None
+    assert coordinator.supports_command("start_climate")
+
+
+async def test_partial_region_rejects_unsupported_service_before_authentication():
+    coordinator = _coordinator(remote=True)
+    coordinator.vehicle_manager.api.supported_commands = frozenset({"lock_action"})
+    with pytest.raises(
+        HomeAssistantError, match="does not support this vehicle command"
+    ):
+        await coordinator.async_start_charge("v1")
+    coordinator.async_check_and_refresh_token.assert_not_awaited()
+    coordinator.hass.async_add_executor_job.assert_not_awaited()
+
+
+async def test_partial_region_exposes_only_supported_controls():
+    vehicle = Vehicle(id="v1", name="test", model="test")
+    vehicle.air_control_is_on = False
+    vehicle.ev_battery_is_charging = False
+    vehicle.ev_first_departure_enabled = False
+    vehicle.ev_charge_limits_ac = 80
+    vehicle.ev_charge_limits_dc = 90
+    vehicle.ev_v2l_discharge_limit = 30
+    vehicle.supports_svm = True
+    coordinator = make_coordinator(vehicle)
+    coordinator.supports_remote_commands = True
+    coordinator.supports_force_refresh = False
+    allowed = {
+        "lock_action",
+        "start_charge",
+        "stop_charge",
+        "set_charge_limits",
+        "start_hazard_lights",
+    }
+    coordinator.supports_command = lambda command: command in allowed
+    hass, entry = make_hass(coordinator)
+    entities = {}
+    for platform in (lock, climate, number, switch, button):
+        created = []
+        await platform.async_setup_entry(hass, entry, created.extend)
+        entities[platform.__name__.rsplit(".", 1)[-1]] = created
+    assert len(entities["lock"]) == 1
+    assert entities["climate"] == []
+    assert {entity.entity_description.key for entity in entities["number"]} == {
+        "ev_charge_limits_ac",
+        "ev_charge_limits_dc",
+    }
+    switches = entities["switch"]
+    assert len(switches) == 2
+    assert any(isinstance(entity, switch.SVMDewarpSwitch) for entity in switches)
+    assert {entity.entity_description.key for entity in entities["button"]} == {
+        "start_hazard_lights"
+    }

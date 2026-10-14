@@ -23,6 +23,7 @@ _LOGGER = logging.getLogger(__name__)
 @dataclass(frozen=True, kw_only=True)
 class HyundaiKiaButtonDescription(ButtonEntityDescription):
     press_action: str
+    command: str | None = None
     exists_fn: Callable[[Vehicle], bool] = lambda _: True
     enabled_fn: Callable[[Vehicle], bool] = lambda _: True
 
@@ -36,6 +37,7 @@ BUTTON_DESCRIPTIONS: Final[tuple[HyundaiKiaButtonDescription, ...]] = (
     ),
     HyundaiKiaButtonDescription(
         key="start_hazard_lights",
+        command="start_hazard_lights",
         translation_key="start_hazard_lights",
         icon="mdi:hazard-lights",
         press_action="async_start_hazard_lights",
@@ -43,6 +45,7 @@ BUTTON_DESCRIPTIONS: Final[tuple[HyundaiKiaButtonDescription, ...]] = (
     ),
     HyundaiKiaButtonDescription(
         key="start_hazard_lights_and_horn",
+        command="start_hazard_lights_and_horn",
         translation_key="start_hazard_lights_and_horn",
         icon="mdi:car-emergency",
         press_action="async_start_hazard_lights_and_horn",
@@ -50,6 +53,7 @@ BUTTON_DESCRIPTIONS: Final[tuple[HyundaiKiaButtonDescription, ...]] = (
     ),
     HyundaiKiaButtonDescription(
         key="start_valet_mode",
+        command="valet_mode_action",
         translation_key="start_valet_mode",
         icon="mdi:key-variant",
         press_action="async_start_valet_mode",
@@ -57,6 +61,7 @@ BUTTON_DESCRIPTIONS: Final[tuple[HyundaiKiaButtonDescription, ...]] = (
     ),
     HyundaiKiaButtonDescription(
         key="stop_valet_mode",
+        command="valet_mode_action",
         translation_key="stop_valet_mode",
         icon="mdi:key-variant",
         press_action="async_stop_valet_mode",
@@ -64,6 +69,7 @@ BUTTON_DESCRIPTIONS: Final[tuple[HyundaiKiaButtonDescription, ...]] = (
     ),
     HyundaiKiaButtonDescription(
         key="open_all_windows",
+        command="set_windows_state",
         translation_key="open_all_windows",
         icon="mdi:window-maximize",
         press_action="async_open_all_windows",
@@ -74,6 +80,7 @@ BUTTON_DESCRIPTIONS: Final[tuple[HyundaiKiaButtonDescription, ...]] = (
     ),
     HyundaiKiaButtonDescription(
         key="close_all_windows",
+        command="set_windows_state",
         translation_key="close_all_windows",
         icon="mdi:window-minimize",
         press_action="async_close_all_windows",
@@ -84,6 +91,7 @@ BUTTON_DESCRIPTIONS: Final[tuple[HyundaiKiaButtonDescription, ...]] = (
     ),
     HyundaiKiaButtonDescription(
         key="vent_all_windows",
+        command="set_windows_state",
         translation_key="vent_all_windows",
         icon="mdi:window-open-variant",
         press_action="async_vent_all_windows",
@@ -94,6 +102,7 @@ BUTTON_DESCRIPTIONS: Final[tuple[HyundaiKiaButtonDescription, ...]] = (
     ),
     HyundaiKiaButtonDescription(
         key="capture_svm_image",
+        command="request_svm_capture",
         translation_key="capture_svm_image",
         icon="mdi:camera-iris",
         press_action="async_request_svm_capture",
@@ -115,7 +124,9 @@ async def async_setup_entry(
             if description.key == "force_refresh":
                 if not coordinator.supports_force_refresh:
                     continue
-            elif not coordinator.supports_remote_commands:
+            elif description.command is not None and not coordinator.supports_command(
+                description.command
+            ):
                 continue
             if not description.exists_fn(vehicle):
                 continue
