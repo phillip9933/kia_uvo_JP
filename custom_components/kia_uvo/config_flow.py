@@ -103,6 +103,14 @@ STEP_CREDENTIALS_DATA_SCHEMA = vol.Schema(
     }
 )
 
+STEP_JAPAN_CREDENTIALS_DATA_SCHEMA = vol.Schema(
+    {
+        vol.Required(CONF_USERNAME): str,
+        vol.Required(CONF_PASSWORD): str,
+        vol.Required(CONF_PIN): vol.All(str, vol.Length(min=1)),
+    }
+)
+
 OPTIONS_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL): vol.All(
@@ -221,6 +229,20 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         #    return await self.async_step_credentials_token()
         return await self.async_step_credentials_password()
 
+    def _credentials_schema(self) -> vol.Schema:
+        if (
+            self._region_data
+            and REGIONS[self._region_data[CONF_REGION]] == REGION_JAPAN
+        ):
+            return STEP_JAPAN_CREDENTIALS_DATA_SCHEMA
+        return STEP_CREDENTIALS_DATA_SCHEMA
+
+    def _missing_japan_pin(self, user_input: dict[str, Any]) -> bool:
+        return self._credentials_schema() is STEP_JAPAN_CREDENTIALS_DATA_SCHEMA and (
+            not isinstance(user_input.get(CONF_PIN), str)
+            or not user_input[CONF_PIN].strip()
+        )
+
     async def async_step_credentials_password(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -228,6 +250,12 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors = {}
 
         if user_input is not None:
+            if self._missing_japan_pin(user_input):
+                return self.async_show_form(
+                    step_id="credentials_password",
+                    data_schema=self._credentials_schema(),
+                    errors={CONF_PIN: "invalid_japan_pin"},
+                )
             assert self._region_data is not None
             # Combine region data with credentials
             full_config = {**self._region_data, **user_input}
@@ -280,7 +308,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="credentials_password",
-            data_schema=STEP_CREDENTIALS_DATA_SCHEMA,
+            data_schema=self._credentials_schema(),
             errors=errors,
         )
 
@@ -366,6 +394,12 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors = {}
 
         if user_input is not None:
+            if self._missing_japan_pin(user_input):
+                return self.async_show_form(
+                    step_id="credentials_token",
+                    data_schema=self._credentials_schema(),
+                    errors={CONF_PIN: "invalid_japan_pin"},
+                )
             assert self._region_data is not None
             # Combine region data with credentials
             full_config = {**self._region_data, **user_input}
@@ -408,7 +442,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="credentials_token",
-            data_schema=STEP_CREDENTIALS_DATA_SCHEMA,
+            data_schema=self._credentials_schema(),
             errors=errors,
         )
 
