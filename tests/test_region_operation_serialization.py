@@ -30,6 +30,8 @@ def coordinator(strict=True):
     result.async_set_updated_data = MagicMock()
     result.async_refresh = AsyncMock()
     result._svm_details = {}
+    result._svm_received_at = {}
+    result._svm_views = {}
     return result
 
 

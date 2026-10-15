@@ -824,9 +824,8 @@ class SVMStatusSensor(SensorEntity, HyundaiKiaConnectEntity):
 
     @property
     def native_value(self) -> datetime | None:
-        """Return the capture timestamp of the latest SVM image."""
-        details = self.coordinator.get_cached_svm_details(self.vehicle.id)
-        return cast(datetime | None, details.captured_at) if details else None
+        """Return the vehicle capture time, or local receipt time if absent."""
+        return self.coordinator.get_svm_image_updated_at(self.vehicle.id)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -835,6 +834,8 @@ class SVMStatusSensor(SensorEntity, HyundaiKiaConnectEntity):
         if details is None:
             return {}
         return {
+            "timestamp_source": "vehicle" if details.captured_at else "received",
+            "vehicle_captured_at": details.captured_at,
             "heading": details.heading,
             "speed": (
                 {"value": details.speed[0], "unit": details.speed[1]}

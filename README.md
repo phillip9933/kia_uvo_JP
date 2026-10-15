@@ -125,6 +125,8 @@ SVM / 360° surround view, where the vehicle supports it (Hyundai only):
 
 - SVM Front Camera, SVM Rear Camera, SVM Left Camera, SVM Right Camera — the side-camera views cropped from the latest capture
 - SVM Bird's-eye View — the top-down view
+- Press **Capture SVM Image**, wait for it to finish, then open one of these image entities on the vehicle device page or add it to a Picture Entity dashboard card. The capture button records its last press time; it does not open an image or show a video stream.
+- **SVM Status** shows the vehicle capture timestamp when available, otherwise the time Home Assistant received the image. Its `timestamp_source` attribute distinguishes `vehicle` from `received`; `vehicle_captured_at` stays empty when the vehicle omitted it. Japan images are kept in memory and require a new manual capture after an integration restart.
 - The side cameras are raw fisheye output; the **SVM Dewarp** switch (under Switches) rectifies them using the per-camera field of view when the API provides it, and falls back to the raw fisheye otherwise
 - Views are cropped, rectified and encoded by the library (`hyundai_kia_connect_api[image]`); the **SVM Dewarp** switch refreshes the image entities immediately — no new capture needed
 

@@ -104,13 +104,13 @@ class SVMImageEntity(ImageEntity, HyundaiKiaConnectEntity):
         self._attr_translation_key = view.translation_key
         self._attr_icon = view.icon
         self._attr_unique_id = f"{DOMAIN}_{vehicle.id}_svm_{view.key}"
-        details = coordinator.get_cached_svm_details(vehicle.id)
-        self._attr_image_last_updated = details.captured_at if details else None
+        self._attr_image_last_updated = coordinator.get_svm_image_updated_at(vehicle.id)
 
     def _handle_coordinator_update(self) -> None:
         """Refresh the capture timestamp when the coordinator pushes an update."""
-        details = self.coordinator.get_cached_svm_details(self.vehicle.id)
-        self._attr_image_last_updated = details.captured_at if details else None
+        self._attr_image_last_updated = self.coordinator.get_svm_image_updated_at(
+            self.vehicle.id
+        )
         super()._handle_coordinator_update()
 
     async def async_added_to_hass(self) -> None:

@@ -79,6 +79,7 @@ class HyundaiKiaConnectDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any
         self.platforms: set[str] = set()
         self._action_lock = asyncio.Lock()
         self._svm_details: dict[str, SVMDetails] = {}
+        self._svm_received_at: dict[str, dt.datetime] = {}
         # Per-vehicle SVM fisheye dewarp toggle (local UI state, off by default).
         self._svm_dewarp: dict[str, bool] = {}
         # Rendered SVM views cache: vehicle_id -> ((captured_at, dewarp), views).
@@ -345,12 +346,25 @@ class HyundaiKiaConnectDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any
         """Return cached SVM details for a vehicle, or None if not yet fetched."""
         return self._svm_details.get(vehicle_id)
 
+    def get_svm_image_updated_at(self, vehicle_id: str) -> dt.datetime | None:
+        """Return the capture time, or local receipt time when GPS time is absent."""
+        details = self.get_cached_svm_details(vehicle_id)
+        if details is None:
+            return None
+        return details.captured_at or self._svm_received_at.get(vehicle_id)
+
+    def _cache_svm_details(self, vehicle_id: str, details: SVMDetails) -> None:
+        """Store a completed capture and invalidate previous rendered views."""
+        self._svm_details[vehicle_id] = details
+        self._svm_received_at[vehicle_id] = dt_util.utcnow()
+        self._svm_views.pop(vehicle_id, None)
+
     async def async_get_svm_details(self, vehicle_id: str) -> SVMDetails:
         """Fetch the latest cached SVM image and metadata from the API."""
         details = await self.hass.async_add_executor_job(
             self.vehicle_manager.get_svm_details, vehicle_id
         )
-        self._svm_details[vehicle_id] = details
+        self._cache_svm_details(vehicle_id, details)
         return details
 
     async def async_request_svm_capture(self, vehicle_id: str) -> SVMDetails:
@@ -364,7 +378,7 @@ class HyundaiKiaConnectDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any
                 vehicle_id,
                 True,  # acknowledged_warning — capture is always a user-initiated action
             )
-            self._svm_details[vehicle_id] = details
+            self._cache_svm_details(vehicle_id, details)
             self.async_set_updated_data(self.data)
             return details
 
@@ -380,7 +394,10 @@ class HyundaiKiaConnectDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any
         details = self.get_cached_svm_details(vehicle_id)
         if details is None or not details.image_bytes or not details.image_sizes:
             return None
-        key = (details.captured_at, self.svm_dewarp_enabled(vehicle_id))
+        key = (
+            self.get_svm_image_updated_at(vehicle_id),
+            self.svm_dewarp_enabled(vehicle_id),
+        )
         cached = self._svm_views.get(vehicle_id)
         if cached is not None and cached[0] == key:
             return cached[1]
