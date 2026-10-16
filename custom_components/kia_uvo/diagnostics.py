@@ -134,4 +134,9 @@ async def async_get_config_entry_diagnostics(
     # on constructed key names like the "email" in `use_email_with_geocode_api`.
     vehicles = _vehicles_payload(coordinator)
     payload["vehicles"] = [redact(v) for v in vehicles]
+    local_diagnostics = getattr(vm.api, "get_local_diagnostics", None)
+    if callable(local_diagnostics):
+        summary = await hass.async_add_executor_job(local_diagnostics)
+        if isinstance(summary, dict):
+            payload["local_protocol"] = summary
     return payload
