@@ -235,6 +235,8 @@ async def test_local_protocol_diagnostics_are_passive_and_off_event_loop() -> No
     assert payload["local_protocol"] == {
         "mqtt_sessions": [{"messages_received": 2, "last_result": "pending"}],
         "svm_images_cached": 1,
+        "last_command": {},
+        "last_camera_capture": {"stage": "idle"},
     }
     assert len(seen) == 1 and seen[0] != loop_thread_id
     assert "SYNTHETIC_PRIVATE" not in json.dumps(payload)

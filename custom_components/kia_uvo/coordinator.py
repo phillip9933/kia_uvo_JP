@@ -71,6 +71,10 @@ class _ConfirmedCommandRefreshError(HomeAssistantError):
     """The command completed but its subsequent telemetry refresh failed."""
 
 
+class _UnconfirmedCommandError(HomeAssistantError):
+    """A submitted command has a known, unsuccessful confirmation outcome."""
+
+
 class HyundaiKiaConnectDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Class to manage fetching data from the API."""
 
@@ -420,8 +424,14 @@ class HyundaiKiaConnectDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any
             getattr(self.vehicle_manager.api, "requires_command_confirmation", False)
             and status != ORDER_STATUS.SUCCESS
         ):
-            raise HomeAssistantError(
-                "The vehicle command was sent but successful completion was not confirmed"
+            reason = {
+                ORDER_STATUS.FAILED: "the service reported failure",
+                ORDER_STATUS.TIMEOUT: "no matching completion reply arrived before timeout",
+                ORDER_STATUS.PENDING: "completion is still pending",
+            }.get(status, "the completion status is unknown")
+            raise _UnconfirmedCommandError(
+                "The vehicle command was sent but successful completion was not confirmed: "
+                + reason
             )
 
     async def _async_refresh_confirmed_command(self, confirmed: bool) -> None:
@@ -545,7 +555,7 @@ class HyundaiKiaConnectDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any
                     )
                 else:
                     await self.async_await_action_and_refresh(vehicle_id, action_id)
-            except _ConfirmedCommandRefreshError:
+            except (_ConfirmedCommandRefreshError, _UnconfirmedCommandError):
                 raise
             except Exception as err:
                 if self.requires_command_confirmation:

@@ -94,3 +94,24 @@ async def test_forced_refresh_wait_also_checks_confirmation(monkeypatch):
     with pytest.raises(HomeAssistantError, match="not confirmed"):
         await result.async_await_action_and_force_refresh("CAR", "SYNTHETIC_ID")
     result.async_set_updated_data.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "status,reason",
+    [
+        (ORDER_STATUS.FAILED, "service reported failure"),
+        (ORDER_STATUS.TIMEOUT, "matching completion reply"),
+        (ORDER_STATUS.PENDING, "still pending"),
+    ],
+)
+async def test_confirmation_error_preserves_specific_outcome(
+    monkeypatch, status, reason
+):
+    monkeypatch.setattr(
+        "custom_components.kia_uvo.coordinator.asyncio.sleep", AsyncMock()
+    )
+    result = coordinator()
+    result.hass.async_add_executor_job.side_effect = ["SYNTHETIC_ID", status, None]
+    with pytest.raises(HomeAssistantError, match=reason):
+        await result.async_unlock_vehicle("CAR")
+    assert not result._action_lock.locked()
