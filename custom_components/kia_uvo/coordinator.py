@@ -87,6 +87,8 @@ class HyundaiKiaConnectDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any
         self._closing = False
         self._svm_details: dict[str, SVMDetails] = {}
         self._svm_received_at: dict[str, dt.datetime] = {}
+        self._svm_render_locks: dict[str, asyncio.Lock] = {}
+        self._svm_render_diagnostics: dict[str, dict[str, Any]] = {}
         # Per-vehicle SVM fisheye dewarp toggle (local UI state, off by default).
         self._svm_dewarp: dict[str, bool] = {}
         # Rendered SVM views cache: vehicle_id -> ((captured_at, dewarp), views).
@@ -454,21 +456,78 @@ class HyundaiKiaConnectDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any
         thread (dewarp is CPU-bound numpy work); render errors (e.g. missing
         Pillow) propagate to the caller.
         """
-        details = self.get_cached_svm_details(vehicle_id)
-        if details is None or not details.image_bytes or not details.image_sizes:
-            return None
-        key = (
-            self.get_svm_image_updated_at(vehicle_id),
-            self.svm_dewarp_enabled(vehicle_id),
-        )
-        cached = self._svm_views.get(vehicle_id)
-        if cached is not None and cached[0] == key:
-            return cached[1]
-        views: dict[str, bytes] = await self.hass.async_add_executor_job(
-            partial(render_views, details, dewarp=key[1])
-        )
-        self._svm_views[vehicle_id] = (key, views)
-        return views
+        if not hasattr(self, "_svm_render_locks"):
+            self._svm_render_locks = {}
+            self._svm_render_diagnostics = {}
+        lock = self._svm_render_locks.setdefault(vehicle_id, asyncio.Lock())
+        async with lock:
+            while True:
+                details = self.get_cached_svm_details(vehicle_id)
+                if (
+                    details is None
+                    or not details.image_bytes
+                    or not details.image_sizes
+                ):
+                    self._svm_render_diagnostics[vehicle_id] = {
+                        "state": "awaiting_capture"
+                        if details is None
+                        else "missing_image_or_layout",
+                        "view_count": 0,
+                    }
+                    return None
+                key = (
+                    self.get_svm_image_updated_at(vehicle_id),
+                    self.svm_dewarp_enabled(vehicle_id),
+                )
+                cached = self._svm_views.get(vehicle_id)
+                if cached is not None and cached[0] == key:
+                    return cached[1]
+                self._svm_render_diagnostics[vehicle_id] = {
+                    "state": "rendering",
+                    "view_count": 0,
+                }
+                try:
+                    views: dict[str, bytes] = await self._async_run_executor_job(
+                        partial(render_views, details, dewarp=key[1])
+                    )
+                except Exception:
+                    self._svm_render_diagnostics[vehicle_id] = {
+                        "state": "failed",
+                        "view_count": 0,
+                        "failure_category": "render_failed",
+                    }
+                    raise HomeAssistantError(
+                        "Camera image could not be rendered"
+                    ) from None
+                if (
+                    self.get_cached_svm_details(vehicle_id) is not details
+                    or self.svm_dewarp_enabled(vehicle_id) != key[1]
+                ):
+                    continue
+                if not views:
+                    self._svm_render_diagnostics[vehicle_id] = {
+                        "state": "failed",
+                        "view_count": 0,
+                        "failure_category": "invalid_image_or_layout",
+                    }
+                    raise HomeAssistantError(
+                        "Camera image or layout could not be decoded"
+                    )
+                self._svm_views[vehicle_id] = (key, views)
+                self._svm_render_diagnostics[vehicle_id] = {
+                    "state": "complete",
+                    "view_count": len(views),
+                }
+                return views
+
+    def get_svm_render_diagnostics(self) -> list[dict[str, Any]]:
+        """Return local render outcomes without images or vehicle identifiers."""
+        return [
+            dict(summary)
+            for summary in list(getattr(self, "_svm_render_diagnostics", {}).values())[
+                :10
+            ]
+        ]
 
     async def async_check_and_refresh_token(self) -> None:
         """Refresh token if needed via library."""

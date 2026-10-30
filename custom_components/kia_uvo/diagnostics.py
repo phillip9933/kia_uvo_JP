@@ -139,4 +139,7 @@ async def async_get_config_entry_diagnostics(
         summary = await hass.async_add_executor_job(local_diagnostics)
         if isinstance(summary, dict):
             payload["local_protocol"] = summary
+    render_summary = coordinator.get_svm_render_diagnostics()
+    if isinstance(render_summary, list):
+        payload["image_rendering"] = render_summary
     return payload
