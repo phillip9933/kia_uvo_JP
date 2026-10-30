@@ -74,12 +74,16 @@ async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> 
         config_entry, PLATFORMS
     ):
         coordinator = hass.data[DOMAIN][config_entry.unique_id]
-        close_api = getattr(coordinator.vehicle_manager.api, "close", None)
-        if callable(close_api):
-            try:
-                await hass.async_add_executor_job(close_api)
-            except Exception:
-                _LOGGER.warning("Unable to close region API session during unload")
+        shutdown = getattr(coordinator, "async_shutdown", None)
+        try:
+            if callable(shutdown):
+                await shutdown()
+            else:
+                close_api = getattr(coordinator.vehicle_manager.api, "close", None)
+                if callable(close_api):
+                    await hass.async_add_executor_job(close_api)
+        except Exception:
+            _LOGGER.warning("Unable to close region API session during unload")
         del hass.data[DOMAIN][config_entry.unique_id]
     if not hass.data[DOMAIN]:
         async_unload_services(hass)

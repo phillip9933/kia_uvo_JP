@@ -6,11 +6,11 @@ import asyncio
 import datetime as dt
 import logging
 import traceback
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from functools import partial
-from typing import Any
+from typing import Any, TypeVar
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
@@ -62,6 +62,8 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+_T = TypeVar("_T")
+
 # Render-invalidation signal for the SVM image entities: sent by
 # set_svm_dewarp, consumed in image.py.
 SIGNAL_SVM_RENDER = DOMAIN + "_{}_svm_render"
@@ -82,6 +84,7 @@ class HyundaiKiaConnectDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any
         """Initialize."""
         self.platforms: set[str] = set()
         self._action_lock = asyncio.Lock()
+        self._closing = False
         self._svm_details: dict[str, SVMDetails] = {}
         self._svm_received_at: dict[str, dt.datetime] = {}
         # Per-vehicle SVM fisheye dewarp toggle (local UI state, off by default).
@@ -176,11 +179,17 @@ class HyundaiKiaConnectDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any
                 "This region does not support this vehicle command"
             )
 
+    def _ensure_not_closing(self) -> None:
+        if getattr(self, "_closing", False):
+            raise HomeAssistantError("The integration is shutting down")
+
     def _require_remote_commands(self) -> None:
+        self._ensure_not_closing()
         if not self.supports_remote_commands:
             raise HomeAssistantError("This region does not support vehicle commands")
 
     def _require_force_refresh(self) -> None:
+        self._ensure_not_closing()
         if not self.supports_force_refresh:
             raise HomeAssistantError("This region supports cached vehicle status only")
 
@@ -193,6 +202,7 @@ class HyundaiKiaConnectDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any
 
     @asynccontextmanager
     async def _async_region_operation(self) -> AsyncIterator[None]:
+        self._ensure_not_closing()
         if not self.requires_command_confirmation:
             yield
             return
@@ -201,7 +211,50 @@ class HyundaiKiaConnectDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any
         async with self._action_lock:
             yield
 
+    async def _async_complete_operation(self, operation: Awaitable[_T]) -> _T:
+        """Finish Japan work before propagating cancellation to its lock owner."""
+        if not self.requires_command_confirmation:
+            return await operation
+        task = asyncio.ensure_future(operation)
+        cancelled = False
+        while True:
+            try:
+                result = await asyncio.shield(task)
+            except asyncio.CancelledError:
+                if task.cancelled():
+                    raise
+                cancelled = True
+            except Exception:
+                if cancelled:
+                    raise asyncio.CancelledError from None
+                raise
+            else:
+                if cancelled:
+                    raise asyncio.CancelledError
+                return result
+
+    async def _async_run_executor_job(
+        self, target: Callable[..., _T], *args: Any
+    ) -> _T:
+        """Drain non-cancellable executor work before releasing Japan's lock."""
+        return await self._async_complete_operation(
+            self.hass.async_add_executor_job(target, *args)
+        )
+
+    async def async_shutdown(self) -> None:
+        """Drain active Japan operations before disposing of their API sessions."""
+        self._closing = True
+        await self._async_complete_operation(self._async_close_api())
+
+    async def _async_close_api(self) -> None:
+        async with self._action_lock:
+            close = getattr(self.vehicle_manager.api, "close", None)
+            if callable(close):
+                await self._async_run_executor_job(close)
+
     async def _async_update_data(self) -> dict[str, Any]:
+        if getattr(self, "_closing", False):
+            return self.data
         if not self.requires_command_confirmation:
             return await self._async_update_data_unlocked()
         if self._action_lock.locked():
@@ -242,7 +295,7 @@ class HyundaiKiaConnectDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any
             ) from err
         if not self.supports_force_refresh:
             try:
-                await self.hass.async_add_executor_job(
+                await self._async_run_executor_job(
                     self.vehicle_manager.update_all_vehicles_with_cached_state
                 )
             except AuthenticationError as err:
@@ -268,7 +321,7 @@ class HyundaiKiaConnectDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any
             )
         ):
             try:
-                await self.hass.async_add_executor_job(
+                await self._async_run_executor_job(
                     self.vehicle_manager.check_and_force_update_vehicles,
                     self.force_refresh_interval,
                 )
@@ -277,7 +330,7 @@ class HyundaiKiaConnectDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any
                     _LOGGER.exception(
                         f"Force update failed, falling back to cached: {traceback.format_exc()}"
                     )
-                    await self.hass.async_add_executor_job(
+                    await self._async_run_executor_job(
                         self.vehicle_manager.update_all_vehicles_with_cached_state
                     )
                 except Exception:
@@ -287,7 +340,7 @@ class HyundaiKiaConnectDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any
                     )
 
         else:
-            await self.hass.async_add_executor_job(
+            await self._async_run_executor_job(
                 self.vehicle_manager.update_all_vehicles_with_cached_state
             )
 
@@ -297,7 +350,7 @@ class HyundaiKiaConnectDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any
         """Update vehicle data."""
         async with self._async_region_operation():
             await self.async_check_and_refresh_token()
-            await self.hass.async_add_executor_job(
+            await self._async_run_executor_job(
                 self.vehicle_manager.update_all_vehicles_with_cached_state
             )
             self.async_set_updated_data(self.data)
@@ -307,7 +360,7 @@ class HyundaiKiaConnectDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any
         self._require_force_refresh()
         async with self._async_region_operation():
             await self.async_check_and_refresh_token()
-            await self.hass.async_add_executor_job(
+            await self._async_run_executor_job(
                 self.vehicle_manager.force_refresh_all_vehicles_states
             )
             self.async_set_updated_data(self.data)
@@ -317,7 +370,7 @@ class HyundaiKiaConnectDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any
         self._require_force_refresh()
         async with self._async_region_operation():
             await self.async_check_and_refresh_token()
-            await self.hass.async_add_executor_job(
+            await self._async_run_executor_job(
                 self.vehicle_manager.force_refresh_vehicle_state, vehicle_id
             )
             self.async_set_updated_data(self.data)
@@ -365,7 +418,7 @@ class HyundaiKiaConnectDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any
 
     async def async_get_svm_details(self, vehicle_id: str) -> SVMDetails:
         """Fetch the latest cached SVM image and metadata from the API."""
-        details = await self.hass.async_add_executor_job(
+        details = await self._async_run_executor_job(
             self.vehicle_manager.get_svm_details, vehicle_id
         )
         self._cache_svm_details(vehicle_id, details)
@@ -375,16 +428,22 @@ class HyundaiKiaConnectDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any
         """Trigger a fresh SVM capture and update the cached details."""
         self._require_command("request_svm_capture")
         async with self._async_region_operation():
-            if self.requires_command_confirmation:
-                await self.async_check_and_refresh_token()
-            details = await self.hass.async_add_executor_job(
-                self.vehicle_manager.request_svm_capture,
-                vehicle_id,
-                True,  # acknowledged_warning — capture is always a user-initiated action
+            return await self._async_complete_operation(
+                self._async_capture_svm_locked(vehicle_id)
             )
-            self._cache_svm_details(vehicle_id, details)
-            self.async_set_updated_data(self.data)
-            return details
+
+    async def _async_capture_svm_locked(self, vehicle_id: str) -> SVMDetails:
+        """Complete capture and cache updates even if the initiating task stops."""
+        if self.requires_command_confirmation:
+            await self.async_check_and_refresh_token()
+        details = await self._async_run_executor_job(
+            self.vehicle_manager.request_svm_capture,
+            vehicle_id,
+            True,  # acknowledged_warning — capture is always a user-initiated action
+        )
+        self._cache_svm_details(vehicle_id, details)
+        self.async_set_updated_data(self.data)
+        return details
 
     async def async_get_svm_views(self, vehicle_id: str) -> dict[str, bytes] | None:
         """Return the 5 rendered SVM views (front/rear/left/right/top) as JPEG.
@@ -413,9 +472,7 @@ class HyundaiKiaConnectDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any
 
     async def async_check_and_refresh_token(self) -> None:
         """Refresh token if needed via library."""
-        await self.hass.async_add_executor_job(
-            self.vehicle_manager.check_and_refresh_token
-        )
+        await self._async_run_executor_job(self.vehicle_manager.check_and_refresh_token)
         await self._async_save_token()
 
     def _check_command_confirmation(self, status: ORDER_STATUS | None) -> None:
@@ -437,7 +494,7 @@ class HyundaiKiaConnectDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any
     async def _async_refresh_confirmed_command(self, confirmed: bool) -> None:
         """Read cached status directly while the operation lock is already held."""
         try:
-            await self.hass.async_add_executor_job(
+            await self._async_run_executor_job(
                 self.vehicle_manager.update_all_vehicles_with_cached_state
             )
             self.async_set_updated_data(self.data)
@@ -454,7 +511,7 @@ class HyundaiKiaConnectDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any
         confirmed = False
         try:
             await asyncio.sleep(5)
-            status = await self.hass.async_add_executor_job(
+            status = await self._async_run_executor_job(
                 self.vehicle_manager.check_action_status,
                 vehicle_id,
                 action_id,
@@ -486,7 +543,7 @@ class HyundaiKiaConnectDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any
         confirmed = False
         try:
             await asyncio.sleep(5)
-            status = await self.hass.async_add_executor_job(
+            status = await self._async_run_executor_job(
                 self.vehicle_manager.check_action_status,
                 vehicle_id,
                 action_id,
@@ -500,7 +557,7 @@ class HyundaiKiaConnectDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any
                 await self._async_refresh_confirmed_command(confirmed)
             else:
                 try:
-                    await self.hass.async_add_executor_job(
+                    await self._async_run_executor_job(
                         self.vehicle_manager.force_refresh_vehicle_state, vehicle_id
                     )
                 except Exception:
@@ -539,33 +596,45 @@ class HyundaiKiaConnectDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any
                 "Please wait for it to complete and try again."
             )
         async with self._action_lock:
-            await self.async_check_and_refresh_token()
-            try:
-                action_id = await self.hass.async_add_executor_job(action_fn)
-            except UnsupportedControlError as err:
-                raise HomeAssistantError(
-                    f"Vehicle does not support this action: {err}"
-                ) from err
-            except Exception as err:
-                raise HomeAssistantError(f"Failed to {error_label}: {err}") from err
-            try:
-                if force_refresh:
-                    await self.async_await_action_and_force_refresh(
-                        vehicle_id, action_id
-                    )
-                else:
-                    await self.async_await_action_and_refresh(vehicle_id, action_id)
-            except (_ConfirmedCommandRefreshError, _UnconfirmedCommandError):
-                raise
-            except Exception as err:
-                if self.requires_command_confirmation:
-                    raise HomeAssistantError(
-                        "The vehicle command was sent but successful completion was not confirmed"
-                    ) from err
-                _LOGGER.exception(
-                    "Action '%s' was sent but confirmation polling failed",
-                    error_label,
+            await self._async_complete_operation(
+                self._async_send_action_locked(
+                    vehicle_id, action_fn, error_label, force_refresh
                 )
+            )
+
+    async def _async_send_action_locked(
+        self,
+        vehicle_id: str,
+        action_fn: Callable[[], Any],
+        error_label: str,
+        force_refresh: bool,
+    ) -> None:
+        """Hold the caller's operation lock through submission and confirmation."""
+        await self.async_check_and_refresh_token()
+        try:
+            action_id = await self._async_run_executor_job(action_fn)
+        except UnsupportedControlError as err:
+            raise HomeAssistantError(
+                f"Vehicle does not support this action: {err}"
+            ) from err
+        except Exception as err:
+            raise HomeAssistantError(f"Failed to {error_label}: {err}") from err
+        try:
+            if force_refresh:
+                await self.async_await_action_and_force_refresh(vehicle_id, action_id)
+            else:
+                await self.async_await_action_and_refresh(vehicle_id, action_id)
+        except (_ConfirmedCommandRefreshError, _UnconfirmedCommandError):
+            raise
+        except Exception as err:
+            if self.requires_command_confirmation:
+                raise HomeAssistantError(
+                    "The vehicle command was sent but successful completion was not confirmed"
+                ) from err
+            _LOGGER.exception(
+                "Action '%s' was sent but confirmation polling failed",
+                error_label,
+            )
 
     async def async_lock_vehicle(self, vehicle_id: str) -> None:
         await self._async_send_action(
