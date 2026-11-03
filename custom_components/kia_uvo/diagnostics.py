@@ -134,4 +134,5 @@ async def async_get_config_entry_diagnostics(
     # on constructed key names like the "email" in `use_email_with_geocode_api`.
     vehicles = _vehicles_payload(coordinator)
     payload["vehicles"] = [redact(v) for v in vehicles]
+    payload["image_rendering"] = coordinator.get_svm_render_diagnostics()
     return payload
