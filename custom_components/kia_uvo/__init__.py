@@ -66,10 +66,12 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
     coordinator = coordinator_class(hass, config_entry)
     try:
         await coordinator.async_config_entry_first_refresh()
-    except ConfigEntryAuthFailed as AuthError:
-        raise ConfigEntryAuthFailed(AuthError) from AuthError
+    except ConfigEntryAuthFailed:
+        await _async_shutdown_coordinator(coordinator)
+        raise
     except Exception as ex:
-        raise ConfigEntryNotReady(f"Config Not Ready: {ex}")
+        await _async_shutdown_coordinator(coordinator)
+        raise ConfigEntryNotReady(f"Config Not Ready: {ex}") from ex
 
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][config_entry.unique_id] = coordinator
@@ -78,17 +80,23 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
     return True
 
 
+async def _async_shutdown_coordinator(
+    coordinator: HyundaiKiaConnectDataUpdateCoordinator,
+) -> None:
+    try:
+        await coordinator.async_shutdown()
+    except Exception as err:
+        _LOGGER.warning(
+            "Unable to shut down vehicle connection (%s)", type(err).__name__[:64]
+        )
+
+
 async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     if unload_ok := await hass.config_entries.async_unload_platforms(
         config_entry, PLATFORMS
     ):
-        coordinator = hass.data[DOMAIN][config_entry.unique_id]
-        if isinstance(coordinator, JapanDataUpdateCoordinator):
-            try:
-                await coordinator.async_shutdown()
-            except Exception:
-                _LOGGER.warning("Unable to close Japan API session during unload")
+        await _async_shutdown_coordinator(hass.data[DOMAIN][config_entry.unique_id])
         del hass.data[DOMAIN][config_entry.unique_id]
     if not hass.data[DOMAIN]:
         async_unload_services(hass)
@@ -98,7 +106,7 @@ async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> 
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
     """Migrate an old config entry to the current version."""
     if config_entry.version == 1:
-        _LOGGER.debug(f"{DOMAIN} - config data- {config_entry}")
+        _LOGGER.debug("%s - config data- %s", DOMAIN, config_entry)
         username = config_entry.data.get(CONF_USERNAME)
         password = config_entry.data.get(CONF_PASSWORD)
         pin = config_entry.data.get(CONF_PIN, DEFAULT_PIN)
