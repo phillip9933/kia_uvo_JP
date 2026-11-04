@@ -73,7 +73,7 @@ async def test_failed_platform_unload_keeps_api_session_open():
     assert "synthetic" in hass.data[DOMAIN]
 
 
-async def test_non_japan_unload_ignores_shutdown_hook(monkeypatch):
+async def test_non_japan_unload_uses_shared_shutdown_hook(monkeypatch):
     shutdown = AsyncMock()
     close = Mock()
     hass = SimpleNamespace(
@@ -92,7 +92,7 @@ async def test_non_japan_unload_ignores_shutdown_hook(monkeypatch):
     )
     monkeypatch.setattr("custom_components.kia_uvo.async_unload_services", Mock())
     assert await async_unload_entry(hass, SimpleNamespace(unique_id="synthetic"))
-    shutdown.assert_not_awaited()
+    shutdown.assert_awaited_once_with()
     hass.async_add_executor_job.assert_not_awaited()
     close.assert_not_called()
 

@@ -114,7 +114,7 @@ class JapanDataUpdateCoordinator(HyundaiKiaConnectDataUpdateCoordinator):
     ) -> _T:
         """Drain non-cancellable executor work before releasing Japan's lock."""
         return await self._async_complete_operation(
-            self.hass.async_add_executor_job(target, *args)
+            super()._async_api_job(target, *args)
         )
 
     async def async_shutdown(self) -> None:
@@ -131,7 +131,9 @@ class JapanDataUpdateCoordinator(HyundaiKiaConnectDataUpdateCoordinator):
         async with self._action_lock:
             close = getattr(self.vehicle_manager.api, "close", None)
             if callable(close):
-                await self._async_run_executor_job(close)
+                await self._async_complete_operation(
+                    self.hass.async_add_executor_job(close)
+                )
 
     async def _async_update_data(self) -> dict[str, Any]:
         if getattr(self, "_closing", False):
