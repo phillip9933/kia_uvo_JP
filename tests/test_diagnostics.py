@@ -243,6 +243,7 @@ async def test_local_protocol_diagnostics_are_passive_and_off_event_loop() -> No
         "svm_images_cached": 1,
         "last_command": {},
         "last_camera_capture": {"stage": "idle"},
+        "last_refresh": {},
     }
     assert len(seen) == 1 and seen[0] != loop_thread_id
     assert "SYNTHETIC_PRIVATE" not in json.dumps(payload)

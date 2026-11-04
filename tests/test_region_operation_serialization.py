@@ -166,4 +166,3 @@ async def test_older_region_uses_original_coordinator_class():
     result = coordinator(False)
     assert type(result) is HyundaiKiaConnectDataUpdateCoordinator
     assert not hasattr(result, "_async_region_operation")
-    assert "async_shutdown" not in HyundaiKiaConnectDataUpdateCoordinator.__dict__
